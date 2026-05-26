@@ -36,10 +36,10 @@ args.N_E = 1000
 args.N_CV = 100
 args.N_T = 200
 args.T = 100
-args.T_test = 100
+args.T_test = 1000
 ### training parameters
 args.use_cuda = True # use GPU or not
-args.n_steps = 2000
+args.n_steps = 500
 args.n_batch = 30
 args.lr = 1e-3
 args.wd = 1e-3
@@ -61,8 +61,8 @@ DatafolderName = 'Simulations/Lorenz_Atractor/data' + '/'
 switch = 'partial' # 'full' or 'partial' or 'estH'
    
 # noise q and r
-r2 = torch.tensor([0.1]) # [100, 10, 1, 0.1, 0.01]
-vdB = -20 # ratio v=q2/r2
+r2 = torch.tensor([1]) # [100, 10, 1, 0.1, 0.01]
+vdB = -26 # ratio v=q2/r2
 v = 10**(vdB/10)
 q2 = torch.mul(v,r2)
 
@@ -117,8 +117,8 @@ N_T = len(test_input)
 loss_obs = nn.MSELoss(reduction='mean')
 MSE_obs_linear_arr = torch.empty(N_T)# MSE [Linear]
 
-for j in range(0, N_T): 
-   reversed_target = torch.matmul(H_Rotate_inv, test_input[j])      
+for j in range(0, N_T):
+   reversed_target = torch.matmul(H_Rotate_inv.to(device), test_input[j])      
    MSE_obs_linear_arr[j] = loss_obs(reversed_target, test_target[j]).item()
 MSE_obs_linear_avg = torch.mean(MSE_obs_linear_arr)
 MSE_obs_dB_avg = 10 * torch.log10(MSE_obs_linear_avg)
@@ -137,23 +137,23 @@ print("Observation Noise Floor(test dataset) - STD:", obs_std_dB, "[dB]")
 ### Evaluate Filters ###
 ########################
 ### Evaluate EKF true
-# print("Evaluate EKF true")
-# [MSE_EKF_linear_arr, MSE_EKF_linear_avg, MSE_EKF_dB_avg, EKF_KG_array, EKF_out] = EKFTest(args, sys_model, test_input, test_target)
-# ### Evaluate EKF partial
-# print("Evaluate EKF partial")
-# [MSE_EKF_linear_arr_partial, MSE_EKF_linear_avg_partial, MSE_EKF_dB_avg_partial, EKF_KG_array_partial, EKF_out_partial] = EKFTest(args, sys_model_partial, test_input, test_target)
+print("Evaluate EKF true")
+[MSE_EKF_linear_arr, MSE_EKF_linear_avg, MSE_EKF_dB_avg, EKF_KG_array, EKF_out] = EKFTest(args, sys_model, test_input, test_target)
+### Evaluate EKF partial
+print("Evaluate EKF partial")
+[MSE_EKF_linear_arr_partial, MSE_EKF_linear_avg_partial, MSE_EKF_dB_avg_partial, EKF_KG_array_partial, EKF_out_partial] = EKFTest(args, sys_model_partial, test_input, test_target)
 
-# ### Save trajectories
-# trajfolderName = 'Filters' + '/'
-# DataResultName = traj_resultName[0]
-# EKF_sample = torch.reshape(EKF_out[0],[1,m,args.T_test])
-# target_sample = torch.reshape(test_target[0,:,:],[1,m,args.T_test])
-# input_sample = torch.reshape(test_input[0,:,:],[1,n,args.T_test])
-# torch.save({
-#             'EKF': EKF_sample,
-#             'ground_truth': target_sample,
-#             'observation': input_sample,
-#             }, trajfolderName+DataResultName)
+### Save trajectories
+trajfolderName = 'Filters' + '/'
+DataResultName = traj_resultName[0]
+EKF_sample = torch.reshape(EKF_out[0],[1,m,args.T_test])
+target_sample = torch.reshape(test_target[0,:,:],[1,m,args.T_test])
+input_sample = torch.reshape(test_input[0,:,:],[1,n,args.T_test])
+torch.save({
+            'EKF': EKF_sample,
+            'ground_truth': target_sample,
+            'observation': input_sample,
+            }, trajfolderName+DataResultName)
 
 #####################
 ### Evaluate KNet ###
@@ -195,10 +195,10 @@ elif switch == 'partial':
    KNet_Pipeline.setssModel(sys_model_partial)
    KNet_Pipeline.setModel(KNet_model)
    KNet_Pipeline.setTrainingParams(args)
-   if(chop):
-      [MSE_cv_linear_epoch, MSE_cv_dB_epoch, MSE_train_linear_epoch, MSE_train_dB_epoch] = KNet_Pipeline.NNTrain(sys_model_partial, cv_input, cv_target, train_input, train_target, path_results,randomInit=True,train_init=train_init)
-   else:
-      [MSE_cv_linear_epoch, MSE_cv_dB_epoch, MSE_train_linear_epoch, MSE_train_dB_epoch] = KNet_Pipeline.NNTrain(sys_model_partial, cv_input, cv_target, train_input, train_target, path_results)
+   # if(chop):
+   #   [MSE_cv_linear_epoch, MSE_cv_dB_epoch, MSE_train_linear_epoch, MSE_train_dB_epoch] = KNet_Pipeline.NNTrain(sys_model_partial, cv_input, cv_target, train_input, train_target, path_results,randomInit=True,train_init=train_init)
+   # else:
+   #   [MSE_cv_linear_epoch, MSE_cv_dB_epoch, MSE_train_linear_epoch, MSE_train_dB_epoch] = KNet_Pipeline.NNTrain(sys_model_partial, cv_input, cv_target, train_input, train_target, path_results)
    ## Test Neural Network
    [MSE_test_linear_arr, MSE_test_linear_avg, MSE_test_dB_avg,Knet_out,RunTime] = KNet_Pipeline.NNTest(sys_model_partial, test_input, test_target, path_results)
 
@@ -252,9 +252,20 @@ elif switch == 'estH':
 else:
    print("Error in switch! Please try 'full' or 'partial' or 'estH'.")
 
+from matplotlib import pyplot as plt
+
+plt.subplot(1, 2, 1)
+plt.plot(MSE_test_linear_arr)
+plt.plot(MSE_EKF_linear_arr_partial)
+plt.subplot(1, 2, 2)
+plt.plot(MSE_test_linear_arr)
+plt.plot(MSE_EKF_linear_arr_partial)
+plt.yscale("log")
+plt.show()
    
+from Plot import Plot_extended as Plot
 
-
-
-
-
+titles = ["True Trajectory","Observation","EKF","KNet"]
+input = [target_sample.cpu(),input_sample.cpu(),EKF_out_partial.cpu(), Knet_out.cpu()]
+Net_Plot = Plot(trajfolderName,DataResultName)
+Net_Plot.plotTrajectories(input,3, titles,trajfolderName+"lor_dec_trajs.png")

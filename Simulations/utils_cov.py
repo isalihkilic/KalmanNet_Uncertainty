@@ -96,10 +96,11 @@ def DecimateData(all_tensors, t_gen,t_mod, offset=0):
     
     # ratio: defines the relation between the sampling time of the true process and of the model (has to be an integer)
     ratio = round(t_mod/t_gen)
-    
+    print(ratio)
     i = 0
     all_tensors_out = all_tensors
     for tensor in all_tensors:
+        #print(tensor, tensor.shape)
         tensor = tensor[:,(0+offset)::ratio]
         if(i==0):
             all_tensors_out = torch.cat([tensor], dim=0).view(1,all_tensors.size()[1],-1)
@@ -108,6 +109,22 @@ def DecimateData(all_tensors, t_gen,t_mod, offset=0):
         i += 1
 
     return all_tensors_out
+
+def GetDecimationMask(seq_len, t_gen, t_mod, offset=0):
+    """
+    Returns a boolean mask of length seq_len where True indicates 
+    the timestep should be kept.
+    """
+    # Calculate the downsampling ratio
+    ratio = round(t_mod / t_gen)
+    
+    # Create a mask of False values
+    mask = torch.zeros(seq_len, dtype=torch.bool)
+    
+    # Set indices to True based on offset and ratio
+    mask[offset::ratio] = True
+    
+    return mask
 
 def Decimate_and_perturbate_Data(true_process, delta_t, delta_t_mod, N_examples, h, lambda_r, offset=0):
     

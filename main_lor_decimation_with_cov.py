@@ -1,19 +1,22 @@
 import torch
+# torch.random.seed(42)
+
 import torch.nn as nn
 from datetime import datetime
 
-import Filters.EKF_test as EKF_test
+import Filters.EKF_test_cov as EKF_test
 
 from Simulations.Extended_sysmdl import SystemModel
 import Simulations.config as config
-from Simulations.utils import Decimate_and_perturbate_Data,Short_Traj_Split
+from Simulations.utils_cov import Decimate_and_perturbate_Data,GetDecimationMask,Short_Traj_Split,getObs
 from Simulations.Lorenz_Atractor.parameters import m1x_0, m2x_0, m, n,delta_t_gen,delta_t,\
 f, h, h_nobatch, fInacc, Q_structure, R_structure
 
-from Pipelines.Pipeline_EKF import Pipeline_EKF
-from KNet.KalmanNet_nn import KalmanNetNN
+from Pipelines.Pipeline_Cov import Pipeline_EKF
+from KNet.KalmanNet_nn_Cov import KalmanNetNN
 
 from Plot import Plot_extended as Plot
+
 
 print("Pipeline Start")
 
@@ -43,6 +46,8 @@ args.n_steps = 2000
 args.n_batch = 8
 args.lr = 1e-4
 args.wd = 1e-4
+args.cov_weight = 1
+args.mean_weight = 1
 
 if args.use_cuda:
    if torch.cuda.is_available():
@@ -59,15 +64,13 @@ chop = False # whether to chop the dataset sequences into smaller ones
 path_results = 'KNet/'
 DatafolderName = 'Simulations/Lorenz_Atractor/data/'
 DatafileName = 'decimated_r0_Ttest3000_NT10.pt'
-data_gen = 'data_gen.pt'
+
+data_gen = 'data_gen5.pt'
 data_gen_file = torch.load(DatafolderName+data_gen)
-[true_sequence] = data_gen_file['All Data']
-data_gen = 'data_gen4.pt'
-data_gen_file = torch.load(DatafolderName+data_gen)
+[true_sequence, true_prior_cov, true_posterior_cov] = data_gen_file#['All Data']
+
 print(true_sequence.shape)
-[true_sequence, _, _] = data_gen_file#['All Data']
-print(true_sequence.shape)
-r = torch.tensor([1])
+r = torch.tensor([10**(-1)])
 lambda_q = torch.tensor([0.3873])
 
 print("1/r2 [dB]: ", 10 * torch.log10(1/r[0]**2))
@@ -88,9 +91,19 @@ sys_model.InitSequence(m1x_0, m2x_0)
 ########################
 print("Data Gen")
 ########################
-[test_target, test_input] = Decimate_and_perturbate_Data(true_sequence, delta_t_gen, delta_t, args.N_T, h_nobatch, r[0], offset) 
-[train_target_long, train_input_long] = Decimate_and_perturbate_Data(true_sequence, delta_t_gen, delta_t, args.N_E, h_nobatch, r[0], offset)
-[cv_target_long, cv_input_long] = Decimate_and_perturbate_Data(true_sequence, delta_t_gen, delta_t, args.N_CV, h_nobatch, r[0], offset)
+mask = GetDecimationMask(true_sequence.shape[-1], delta_t_gen, delta_t, offset=offset)
+test_target = torch.cat(args.N_T*[true_sequence[:,:,mask]])
+test_target_cov = torch.cat(args.N_T*[true_posterior_cov[:,:,:,mask]]).to(device="cuda")
+test_input = torch.cat(args.N_T*[getObs(true_sequence[:,:,mask], h_nobatch)]) + torch.randn_like(test_target) * r[0]
+
+train_target_long = torch.cat(args.N_E*[true_sequence[:,:,mask]])
+train_target_cov_long = torch.cat(args.N_E*[true_posterior_cov[:,:,:,mask]]).to(device="cuda")
+train_input_long = torch.cat(args.N_E*[getObs(true_sequence[:,:,mask], h_nobatch)]) + torch.randn_like(train_target_long) * r[0]
+
+cv_target_long = torch.cat(args.N_CV*[true_sequence[:,:,mask]])
+cv_target_cov_long = torch.cat(args.N_CV*[true_posterior_cov[:,:,:,mask]]).to(device="cuda")
+cv_input_long = torch.cat(args.N_CV*[getObs(true_sequence[:,:,mask], h_nobatch)]) + torch.randn_like(cv_target_long) * r[0]
+
 if chop:
    print("chop training data")  
    [train_target, train_input, train_init] = Short_Traj_Split(train_target_long, train_input_long, args.T)
@@ -159,9 +172,9 @@ print("Observation Noise Floor(train dataset) - STD:", obs_std_dB, "[dB]")
 ########################
 ### EKF
 print("Start EKF test J=5")
-[MSE_EKF_linear_arr, MSE_EKF_linear_avg, MSE_EKF_dB_avg, EKF_KG_array, EKF_out] = EKF_test.EKFTest(args, sys_model_true, test_input, test_target)
+[MSE_EKF_linear_arr, MSE_EKF_linear_avg, MSE_EKF_dB_avg, EKF_KG_array, EKF_out] = EKF_test.EKFTest(args, sys_model_true, test_input, test_target, test_target_cov)
 print("Start EKF test J=2")
-[MSE_EKF_linear_arr_partial, MSE_EKF_linear_avg_partial, MSE_EKF_dB_avg_partial, EKF_KG_array_partial, EKF_out_partial] = EKF_test.EKFTest(args, sys_model, test_input, test_target)
+[MSE_EKF_linear_arr_partial, MSE_EKF_linear_avg_partial, MSE_EKF_dB_avg_partial, EKF_KG_array_partial, EKF_out_partial] = EKF_test.EKFTest(args, sys_model, test_input, test_target, test_target_cov)
 
 ########################################
 ### KalmanNet with model mismatch ######
@@ -176,14 +189,12 @@ print("Number of trainable parameters for KNet:",sum(p.numel() for p in KNet_mod
 # Train Neural Network
 KNet_Pipeline.setTrainingParams(args)
 # if(chop):
-#    KNet_Pipeline.NNTrain(sys_model,cv_input_long,cv_target_long,train_input,train_target,path_results,\
+#    KNet_Pipeline.NNTrain(sys_model,cv_input_long,cv_target_long,cv_target_cov_long,train_input,train_target,train_target_cov_long,path_results,\
 #                          randomInit=True,train_init=train_init)
 # else:
-#    KNet_Pipeline.NNTrain(sys_model,cv_input_long,cv_target_long,train_input,train_target,path_results)
+#    KNet_Pipeline.NNTrain(sys_model,cv_input_long,cv_target_long,cv_target_cov_long,train_input,train_target,train_target_cov_long,path_results)
 # Test Neural Network
-[MSE_test_linear_arr, MSE_test_linear_avg, MSE_test_dB_avg, knet_out,t] = KNet_Pipeline.NNTest(sys_model,test_input,test_target,path_results)
-
-
+[MSE_test_linear_arr, MSE_test_linear_avg, MSE_test_dB_avg, knet_out,t] = KNet_Pipeline.NNTest(sys_model,test_input,test_target,test_target_cov,path_results)
 
 # Save trajectories
 trajfolderName = 'Simulations/Lorenz_Atractor' + '/'
@@ -201,7 +212,7 @@ torch.save({
 #############
 ### Plot  ###
 #############
-titles = ["True Trajectory","Observation","EKF","KNet"]
+titles = ["True Trajectory","Observation","EKF","KalmanNet"]
 input = [target_sample.cpu(),input_sample.cpu(),EKF_out_partial.cpu(), knet_out.cpu()]
 Net_Plot = Plot(trajfolderName,DataResultName)
 Net_Plot.plotTrajectories(input,3, titles,trajfolderName+"lor_dec_trajs.png")

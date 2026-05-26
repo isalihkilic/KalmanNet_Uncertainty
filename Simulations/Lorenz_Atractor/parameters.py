@@ -79,6 +79,7 @@ def f_gen(x, jacobian=False):
 ### f will be fed to filters and KNet, note that the mismatch comes from delta_t
 def f(x, jacobian=False):
     BX = torch.zeros([x.shape[0],m,m]).float().to(x.device) #[batch_size, m, m]
+    #print("aaaa", x.shape)
     BX[:,1,0] = torch.squeeze(-x[:,2,:]) 
     BX[:,2,0] = torch.squeeze(x[:,1,:]) 
     Const = C.to(x.device)

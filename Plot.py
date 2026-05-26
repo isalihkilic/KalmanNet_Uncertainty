@@ -614,7 +614,7 @@ class Plot_extended(Plot_RTS):
                     c = 'c'
                 elif(title == "Vanilla RNN"):
                     c = 'm'
-                elif(title == "KNet"):
+                elif(title == "KalmanNet"):
                     c = 'y'               
                 else:
                     c = 'purple'
